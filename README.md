@@ -1,3 +1,6 @@
+## Cuckoo-Rocksdb
+This is a tentative version of rocksdb, and under development, do not use it please, thx~
+
 ## RocksDB: A Persistent Key-Value Store for Flash and RAM Storage
 
 [![Linux/Mac Build Status](https://travis-ci.org/facebook/rocksdb.svg?branch=master)](https://travis-ci.org/facebook/rocksdb)
