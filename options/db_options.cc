@@ -89,7 +89,9 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
       avoid_unnecessary_blocking_io(options.avoid_unnecessary_blocking_io),
       persist_stats_to_disk(options.persist_stats_to_disk),
       write_dbid_to_manifest(options.write_dbid_to_manifest),
-      log_readahead_size(options.log_readahead_size) {
+      log_readahead_size(options.log_readahead_size),
+      persistent_file_path_(options.persistent_file_path_),
+      is_tiered(options.is_tiered) {
 }
 
 void ImmutableDBOptions::Dump(Logger* log) const {

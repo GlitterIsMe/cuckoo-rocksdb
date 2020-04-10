@@ -29,6 +29,7 @@
 #include "util/coding.h"
 #include "util/stop_watch.h"
 
+#define TIERED_DEBUG
 namespace rocksdb {
 
 namespace {
@@ -149,17 +150,26 @@ Status TableCache::FindTable(const EnvOptions& env_options,
     if (no_io) {  // Don't do IO and return a not-found status
       return Status::Incomplete("Table not found in table_cache, no_io is set");
     }
+// #ifndef TIERED_DEBUG
+//         fprintf(stdout, "[TableCache::FindTable]----------------GetTableReader---------------------\n\n");
+// #endif
     std::unique_ptr<TableReader> table_reader;
     s = GetTableReader(env_options, internal_comparator, fd,
                        false /* sequential mode */, record_read_stats,
                        file_read_hist, &table_reader, prefix_extractor,
                        skip_filters, level, prefetch_index_and_filter_in_cache);
     if (!s.ok()) {
+// #ifndef TIERED_DEBUG
+//         fprintf(stdout, "[TableCache::FindTable]----------------NO_FILE---------------------\n\n");
+// #endif
       assert(table_reader == nullptr);
       RecordTick(ioptions_.statistics, NO_FILE_ERRORS);
       // We do not cache error results so that if the error is transient,
       // or somebody repairs the file, we recover automatically.
     } else {
+// #ifndef TIERED_DEBUG
+//         fprintf(stdout, "[TableCache::FindTable]----------------Insert into Cache---------------------\n\n");
+// #endif
       s = cache_->Insert(key, table_reader.get(), 1, &DeleteEntry<TableReader>,
                          handle);
       if (s.ok()) {
@@ -385,6 +395,9 @@ Status TableCache::Get(const ReadOptions& options,
           options.read_tier == kBlockCacheTier /* no_io */,
           true /* record_read_stats */, file_read_hist, skip_filters, level);
       if (s.ok()) {
+#ifndef TIERED_DEBUG
+    fprintf(stdout, "[TableCache:Get]--------------FindTable OK---------------\n");
+#endif
         t = GetTableReaderFromHandle(handle);
       }
     }
@@ -401,9 +414,15 @@ Status TableCache::Get(const ReadOptions& options,
       }
     }
     if (s.ok()) {
+#ifndef TIERED_DEBUG
+    fprintf(stdout, "[TableCache:Get]--------------Table Reader Get Begin---------------\n");
+#endif
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
       s = t->Get(options, k, get_context, prefix_extractor, skip_filters);
       get_context->SetReplayLog(nullptr);
+#ifndef TIERED_DEBUG
+    fprintf(stdout, "[TableCache:Get]--------------Table Reader Get End-------------\n");
+#endif
     } else if (options.read_tier == kBlockCacheTier && s.IsIncomplete()) {
       // Couldn't find Table in cache but treat as kFound if no_io set
       get_context->MarkKeyMayExist();

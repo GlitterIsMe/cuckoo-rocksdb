@@ -199,6 +199,9 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
     PutLengthPrefixedSlice(dst, f.smallest.Encode());
     PutLengthPrefixedSlice(dst, f.largest.Encode());
     PutVarint64Varint64(dst, f.fd.smallest_seqno, f.fd.largest_seqno);
+    
+    PutVarint64(dst, f.pmem_block_num);
+
     if (has_customized_fields) {
       // Customized fields' format:
       // +-----------------------------+
@@ -316,7 +319,8 @@ const char* VersionEdit::DecodeNewFile4From(Slice* input) {
       GetVarint64(input, &file_size) && GetInternalKey(input, &f.smallest) &&
       GetInternalKey(input, &f.largest) &&
       GetVarint64(input, &smallest_seqno) &&
-      GetVarint64(input, &largest_seqno)) {
+      GetVarint64(input, &largest_seqno) &&
+      GetVarint64(input, &f.pmem_block_num)) {
     // See comments in VersionEdit::EncodeTo() for format of customized fields
     while (true) {
       uint32_t custom_tag;
@@ -505,7 +509,8 @@ Status VersionEdit::DecodeFrom(const Slice& src) {
             GetInternalKey(&input, &f.smallest) &&
             GetInternalKey(&input, &f.largest) &&
             GetVarint64(&input, &smallest_seqno) &&
-            GetVarint64(&input, &largest_seqno)) {
+            GetVarint64(&input, &largest_seqno) && 
+            GetVarint64(&input, &f.pmem_block_num)) {
           f.fd = FileDescriptor(number, 0, file_size, smallest_seqno,
                                 largest_seqno);
           new_files_.push_back(std::make_pair(level, f));
@@ -528,7 +533,8 @@ Status VersionEdit::DecodeFrom(const Slice& src) {
             GetInternalKey(&input, &f.smallest) &&
             GetInternalKey(&input, &f.largest) &&
             GetVarint64(&input, &smallest_seqno) &&
-            GetVarint64(&input, &largest_seqno)) {
+            GetVarint64(&input, &largest_seqno) &&
+            GetVarint64(&input, &f.pmem_block_num)) {
           f.fd = FileDescriptor(number, path_id, file_size, smallest_seqno,
                                 largest_seqno);
           new_files_.push_back(std::make_pair(level, f));

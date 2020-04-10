@@ -59,6 +59,8 @@
 #include "util/stop_watch.h"
 #include "util/string_util.h"
 
+#define TIERED_DEBUG
+
 namespace rocksdb {
 
 const char* GetCompactionReasonString(CompactionReason compaction_reason) {
@@ -419,7 +421,7 @@ void CompactionJob::Prepare() {
       GenSubcompactionBoundaries();
     }
     assert(sizes_.size() == boundaries_.size() + 1);
-
+    
     for (size_t i = 0; i <= boundaries_.size(); i++) {
       Slice* start = i == 0 ? nullptr : &boundaries_[i - 1];
       Slice* end = i == boundaries_.size() ? nullptr : &boundaries_[i];
@@ -441,13 +443,129 @@ struct RangeWithSize {
 };
 
 void CompactionJob::GenSubcompactionBoundaries() {
+  output_level_group_filter_block_nums_.clear();
+
   auto* c = compact_->compaction;
   auto* cfd = c->column_family_data();
   const Comparator* cfd_comparator = cfd->user_comparator();
+  const InternalKeyComparator& cfd_internal_comparator = cfd->internal_comparator();
   std::vector<Slice> bounds;
   int start_lvl = c->start_level();
   int out_lvl = c->output_level();
 
+  if (cfd->ioptions()->compaction_style == kCompactionStyleTier) {
+    // 根据实现,每一个 compaction 中只构建了一个 start_level_inputs
+    // 以及一个 output_level_inputs
+    // Tier Compaction 中只会在 compaction_inputs_ 中存放一层有关 start_level_ 层的 input File
+    assert(c->num_input_levels() == 1);
+    assert(start_lvl == c->level(0));
+    // Compaction 类型是新增的 kCompactionStyleTier
+    const std::vector<CompactionInputFiles>& output_level_files = 
+        c->GetDumpOutputLevel();
+    
+    const std::vector<FileMetaData*>& output_files = output_level_files[0].files;
+
+// #ifndef TIERED_DEBUG
+//       fprintf(stdout, "[CompactionJob::GenSubcompaction]-----------------output_files info-------------------\n");
+//       for (size_t i = 0; i < output_files.size(); i++) {
+//         fprintf(stdout, "[ %s --> %s : %ld ], ", 
+//                 ExtractUserKey(output_files[i]->smallest.Encode()).ToString().c_str(),
+//                 ExtractUserKey(output_files[i]->largest.Encode()).ToString().c_str(),
+//                 output_files[i]->pmem_block_num);
+//       }
+//       fprintf(stdout, "\n[CompactionJob::GenSubcompaction]------------------------------------\n\n");
+// #endif
+
+    // 考虑到在 ProcessKeyValueCompaction 中有如下代码
+    // if (end != nullptr &&
+    //     cfd->user_comparator()->Compare(c_iter->user_key(), *end) >= 0) {
+    //   break;
+    // }
+    // boundaries 中应该保存下一个 group 的最小 key, 如:
+    // +----------+                    +----------+  +----------+
+    // |   0-31   |  in level i   =>   |   0-13   |  |   16-32  | in level i + 1
+    // +----------+                    +----------+  +----------+
+    // 对 0-31 进行划分的时候就需要将 16 作为 boundary
+
+    // 根据 output_level_files 获得 output_level 上的部分分组情况
+    // 将分组的边界保存在 bounds 中
+    std::vector<RangeWithSize> ranges;
+    
+    if (!output_level_files.empty()) {
+      assert(output_level_files[0].level == out_lvl);
+      InternalKey bound_left_key = output_files[0]->smallest;
+      bounds.push_back(output_files[0]->smallest.Encode());
+      InternalKey bound_right_key = output_files[0]->largest;
+      output_level_group_filter_block_nums_.push_back(output_files[0]->pmem_block_num);
+      for (size_t i = 1; i < output_files.size(); i++) {
+        if (cfd_comparator->Compare(bound_left_key.Encode(), 
+                            output_files[i]->smallest.Encode()) <= 0 &&
+            cfd_comparator->Compare(bound_right_key.Encode(),
+                            output_files[i]->smallest.Encode()) >= 0) {
+          if (cfd_internal_comparator.Compare(bound_right_key, 
+                            output_files[i]->largest) < 0) {
+            bound_right_key = output_files[i]->largest;
+          }
+        } else {
+          output_level_group_filter_block_nums_.push_back(output_files[i]->pmem_block_num);
+          bounds.push_back(output_files[i]->smallest.Encode());
+          bound_left_key = output_files[i]->smallest;
+          bound_right_key = output_files[i]->largest;
+        }
+      }
+      bounds.push_back(bound_right_key.Encode());
+
+#ifndef TIERED_DEBUG
+      fprintf(stdout, "[CompactionJob::GenSubcompaction]-----------------bounds info-------------------\n");
+      for (size_t i = 0; i < bounds.size(); i++) {
+        fprintf(stdout, "%s, ", ExtractUserKey(bounds[i]).ToString().c_str());
+      }
+      fprintf(stdout, "\n[CompactionJob::GenSubcompaction]------------------------------------\n\n");
+#endif
+
+      // 拿到 bounds 之后对文件 size 进行划分
+      auto* v = compact_->compaction->input_version();
+      for (auto it = bounds.begin();;) {
+        const Slice a = *it;
+        ++it;
+
+        if (it == bounds.end()) {
+          break;
+        }
+
+        const Slice b = *it;
+
+        db_mutex_->Unlock();
+        uint64_t size = versions_->ApproximateSize(SizeApproximationOptions(), v, a,
+                                                  b, start_lvl, out_lvl,
+                                                  TableReaderCaller::kCompaction);
+        db_mutex_->Lock();
+        ranges.emplace_back(a, b, size);
+      }
+
+      // 将 ranges 中的信息保存到 boundaries 和 sizes_ 中
+      for (size_t i = 0; i < ranges.size() - 1; i++) {
+        boundaries_.emplace_back(ExtractUserKey(ranges[i].range.limit));
+        sizes_.emplace_back(ranges[i].size);
+      }
+      sizes_.emplace_back(ranges.back().size);
+
+#ifndef TIERED_DEBUG
+      fprintf(stdout, "[CompactionJob::GenSubcompaction]------------------------------------\n");
+      for (size_t i = 0; i < boundaries_.size(); i++) {
+        fprintf(stdout, "%s, ", boundaries_[i].ToString().c_str());
+      }
+      fprintf(stdout, "\n[CompactionJob::GenSubcompaction]------------------------------------\n\n");
+#endif
+    } else {
+      // 目前在 output_level_ 和 start_level_ 的 compaction 文件
+      // 不存在交集的时候, 对 start_level_ 的文件不做 sub_compaction 处理
+      // 之后可以优化: 根据预定参数进行划分
+      
+    }
+    return;
+  }
+  // 否则执行原有的处理流程
   // Add the starting and/or ending key of certain input files as a potential
   // boundary
   for (size_t lvl_idx = 0; lvl_idx < c->num_input_levels(); lvl_idx++) {
@@ -582,14 +700,32 @@ Status CompactionJob::Run() {
   // Launch a thread for each of subcompactions 1...num_threads-1
   std::vector<port::Thread> thread_pool;
   thread_pool.reserve(num_threads - 1);
+
+  auto* pre_cfd = compact_->compaction->column_family_data();
+  uint64_t input_group_filter_block_num = compact_->compaction->GetInputGroupFilterBlockNum();
   for (size_t i = 1; i < compact_->sub_compact_states.size(); i++) {
-    thread_pool.emplace_back(&CompactionJob::ProcessKeyValueCompaction, this,
-                             &compact_->sub_compact_states[i]);
+    if (pre_cfd->ioptions()->compaction_style == kCompactionStyleTier) {
+      thread_pool.emplace_back(&CompactionJob::ProcessKeyValueCompaction, this,
+                             &compact_->sub_compact_states[i],
+      (i >= output_level_group_filter_block_nums_.size()) ? 0 : 
+                            output_level_group_filter_block_nums_[i],
+                             input_group_filter_block_num);
+    } else {
+      thread_pool.emplace_back(&CompactionJob::ProcessKeyValueCompaction, this,
+                             &compact_->sub_compact_states[i], 0, 0);
+    }
   }
 
-  // Always schedule the first subcompaction (whether or not there are also
-  // others) in the current thread to be efficient with resources
-  ProcessKeyValueCompaction(&compact_->sub_compact_states[0]);
+  if (pre_cfd->ioptions()->compaction_style == kCompactionStyleTier) {
+    // Always schedule the first subcompaction (whether or not there are also
+    // others) in the current thread to be efficient with resources
+    ProcessKeyValueCompaction(&compact_->sub_compact_states[0],
+    (output_level_group_filter_block_nums_.size() == 0) ? 0 : 
+                            output_level_group_filter_block_nums_[0],
+                            input_group_filter_block_num);
+  } else {
+    ProcessKeyValueCompaction(&compact_->sub_compact_states[0]);
+  }
 
   // Wait for all other threads (if there are any) to finish execution
   for (auto& thread : thread_pool) {
@@ -806,7 +942,9 @@ Status CompactionJob::Install(const MutableCFOptions& mutable_cf_options) {
   return status;
 }
 
-void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
+void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact,
+                                              uint64_t group_filter_block_num,
+                                              uint64_t input_group_filter_block_num) {
   assert(sub_compact != nullptr);
 
   uint64_t prev_cpu_micros = env_->NowCPUNanos() / 1000;
@@ -903,6 +1041,26 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
   }
   const auto& c_iter_stats = c_iter->iter_stats();
 
+  // 将 input 的 group filter 中的指定 key 删除
+  // 加入到 output 的 group filter 中
+  CuckooFilter *input_level_cuckoo_filter = nullptr;
+  CuckooFilter *output_level_cuckoo_filter = nullptr;
+
+  if (cfd->ioptions()->compaction_style == kCompactionStyleTier) {
+    if (input_group_filter_block_num != 0) {
+      input_level_cuckoo_filter = new CuckooFilter(cfd->GetPersistentArena(), 
+                                      input_group_filter_block_num);
+    }
+    if (group_filter_block_num == 0) {
+      output_level_cuckoo_filter = new CuckooFilter(cfd->GetPersistentArena(),
+                                       sub_compact->compaction->output_level(), 
+                                       group_filter_block_num);
+    } else {
+      output_level_cuckoo_filter = new CuckooFilter(cfd->GetPersistentArena(),
+                                       group_filter_block_num);
+    }
+  }
+
   while (status.ok() && !cfd->IsDropped() && c_iter->Valid()) {
     // Invariant: c_iter.status() is guaranteed to be OK if c_iter->Valid()
     // returns true.
@@ -924,7 +1082,11 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
 
     // Open output file if necessary
     if (sub_compact->builder == nullptr) {
-      status = OpenCompactionOutputFile(sub_compact);
+      if (cfd->ioptions()->compaction_style == kCompactionStyleTier) {
+        status = OpenCompactionOutputFile(sub_compact, group_filter_block_num);
+      } else {
+        status = OpenCompactionOutputFile(sub_compact);
+      }
       if (!status.ok()) {
         break;
       }
@@ -938,6 +1100,14 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
         key, value, ikey.sequence, ikey.type);
     sub_compact->num_output_records++;
 
+    if (cfd->ioptions()->compaction_style == kCompactionStyleTier) {
+      if (input_level_cuckoo_filter) {
+        input_level_cuckoo_filter->CuckooDeleteKey(ikey.user_key.data(), ikey.user_key.size());
+      }
+      if (output_level_cuckoo_filter) {
+        output_level_cuckoo_filter->CuckooPutKey(ikey.user_key.data(), ikey.user_key.size());
+      }
+    }
     // Close output file if it is big enough. Two possibilities determine it's
     // time to close it: (1) the current key should be this file's last key, (2)
     // the next key should not be in this file.
@@ -989,6 +1159,9 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
     }
   }
 
+  delete input_level_cuckoo_filter;
+  delete output_level_cuckoo_filter;
+
   sub_compact->num_input_records = c_iter_stats.num_input_records;
   sub_compact->compaction_job_stats.num_input_deletion_records =
       c_iter_stats.num_input_deletion_records;
@@ -1031,7 +1204,11 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
   if (status.ok() && sub_compact->builder == nullptr &&
       sub_compact->outputs.size() == 0 && !range_del_agg.IsEmpty()) {
     // handle subcompaction containing only range deletions
-    status = OpenCompactionOutputFile(sub_compact);
+    if (cfd->ioptions()->compaction_style == kCompactionStyleTier) {
+      status = OpenCompactionOutputFile(sub_compact, group_filter_block_num);
+    } else {
+      status = OpenCompactionOutputFile(sub_compact);
+    }
   }
 
   // Call FinishCompactionOutputFile() even if status is not ok: it needs to
@@ -1439,8 +1616,13 @@ void CompactionJob::RecordCompactionIOStats() {
   IOSTATS_RESET(bytes_written);
 }
 
+// 在此处初始化了 FileMetaData 中的 fd
+// 并且因为在 Compaction 步骤中可以计算出指定文件属于哪一个 group
+// 所以考虑在调用 OpenCompactionOutputFile 之前就初始化
+// FileMetaData 指定的 CuckooFilter
 Status CompactionJob::OpenCompactionOutputFile(
-    SubcompactionState* sub_compact) {
+    SubcompactionState* sub_compact,
+    uint64_t group_filter_block_num) {
   assert(sub_compact != nullptr);
   assert(sub_compact->builder == nullptr);
   // no need to lock because VersionSet::next_file_number_ is atomic
@@ -1481,6 +1663,8 @@ Status CompactionJob::OpenCompactionOutputFile(
   SubcompactionState::Output out;
   out.meta.fd =
       FileDescriptor(file_number, sub_compact->compaction->output_path_id(), 0);
+  out.meta.pmem_block_num = group_filter_block_num;
+
   out.finished = false;
 
   sub_compact->outputs.push_back(out);

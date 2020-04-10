@@ -19,6 +19,7 @@
 #include "db/compaction/compaction_picker_fifo.h"
 #include "db/compaction/compaction_picker_level.h"
 #include "db/compaction/compaction_picker_universal.h"
+#include "db/compaction/compaction_picker_tier.h"
 #include "db/db_impl/db_impl.h"
 #include "db/internal_stats.h"
 #include "db/job_context.h"
@@ -171,6 +172,9 @@ Status CheckCFPathsSupported(const DBOptions& db_options,
   // and level compaction styles. This function also checks the case
   // in which cf_paths is not specified, which results in db_paths
   // being used.
+  if (cf_options.compaction_style == kCompactionStyleTier) {
+    return Status::OK();
+  }
   if ((cf_options.compaction_style != kCompactionStyleUniversal) &&
       (cf_options.compaction_style != kCompactionStyleLevel)) {
     if (cf_options.cf_paths.size() > 1) {
@@ -214,7 +218,8 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
   if (result.num_levels < 1) {
     result.num_levels = 1;
   }
-  if (result.compaction_style == kCompactionStyleLevel &&
+  if ((result.compaction_style == kCompactionStyleLevel || 
+       result.compaction_style == kCompactionStyleTier) &&
       result.num_levels < 2) {
     result.num_levels = 2;
   }
@@ -447,6 +452,17 @@ ColumnFamilyData::ColumnFamilyData(
       last_memtable_id_(0) {
   Ref();
 
+  // 在此处初始化创建 Persistent Arena 
+  // 需要在 ImmutableCFOptions 中添加关于是否开启 Tiered Mode 的参数
+  // 以及关于 persistent 文件的 path
+  if (ioptions_.is_tiered) {
+    char buf[100];
+    snprintf(buf, sizeof(buf), "%s/cf_%u_%s_cuckoo_filters.pool",
+             ioptions_.persistent_file_path_.c_str(), id, name.c_str());
+    std::string path(buf);
+    pmem_arena_ = new PersistentArena(path);
+  }
+
   // Convert user defined table properties collector factories to internal ones.
   GetIntTblPropCollectorFactory(ioptions_, &int_tbl_prop_collector_factories_);
 
@@ -466,6 +482,9 @@ ColumnFamilyData::ColumnFamilyData(
     } else if (ioptions_.compaction_style == kCompactionStyleFIFO) {
       compaction_picker_.reset(
           new FIFOCompactionPicker(ioptions_, &internal_comparator_));
+    } else if (ioptions_.compaction_style == kCompactionStyleTier) {
+      compaction_picker_.reset(
+          new TierCompactionPicker(ioptions_, &internal_comparator_));
     } else if (ioptions_.compaction_style == kCompactionStyleNone) {
       compaction_picker_.reset(new NullCompactionPicker(
           ioptions_, &internal_comparator_));

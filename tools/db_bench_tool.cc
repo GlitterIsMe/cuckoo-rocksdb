@@ -1227,6 +1227,9 @@ DEFINE_bool(report_file_operations, false, "if report number of file "
             "operations");
 DEFINE_int32(readahead_size, 0, "Iterator readahead size");
 
+DEFINE_string(persistent_file_path, "/mnt/pmem0", "The path of the persistent memory file");
+DEFINE_bool(is_tiered, false, "if use Tiered Compaction Read Mode");
+
 static const bool FLAGS_soft_rate_limit_dummy __attribute__((__unused__)) =
     RegisterFlagValidator(&FLAGS_soft_rate_limit, &ValidateRateLimit);
 
@@ -3466,6 +3469,8 @@ class Benchmark {
         FLAGS_level_compaction_dynamic_level_bytes;
     options.max_bytes_for_level_multiplier =
         FLAGS_max_bytes_for_level_multiplier;
+    options.persistent_file_path_ = FLAGS_persistent_file_path;
+    options.is_tiered = FLAGS_is_tiered;
     if ((FLAGS_prefix_size == 0) && (FLAGS_rep_factory == kPrefixHash ||
                                      FLAGS_rep_factory == kHashLinkedList)) {
       fprintf(stderr, "prefix_size should be non-zero if PrefixHash or "
@@ -4321,6 +4326,7 @@ class Benchmark {
     auto num_db = db_list.size();
     size_t num_levels = static_cast<size_t>(open_options_.num_levels);
     size_t output_level = open_options_.num_levels - 1;
+    // 应该是每个 cf 对应的每个 level 的各个 SST 的 Meta Data
     std::vector<std::vector<std::vector<SstFileMetaData>>> sorted_runs(num_db);
     std::vector<size_t> num_files_at_level0(num_db, 0);
     if (compaction_style == kCompactionStyleLevel) {

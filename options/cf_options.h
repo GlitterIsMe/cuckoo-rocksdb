@@ -124,6 +124,12 @@ struct ImmutableCFOptions {
   std::vector<DbPath> cf_paths;
 
   std::shared_ptr<ConcurrentTaskLimiter> compaction_thread_limiter;
+
+  // 添加持久化内存文件的路径
+  std::string persistent_file_path_;
+
+  // 是否开启 Tiered 模式
+  bool is_tiered;
 };
 
 struct MutableCFOptions {

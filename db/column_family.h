@@ -27,6 +27,8 @@
 #include "trace_replay/block_cache_tracer.h"
 #include "util/thread_local.h"
 
+#include "utilities/persistent_cuckoo_filter/persistent_arena.h"
+
 namespace rocksdb {
 
 class Version;
@@ -497,6 +499,8 @@ class ColumnFamilyData {
 
   ThreadLocalPtr* TEST_GetLocalSV() { return local_sv_.get(); }
 
+  PersistentArena* GetPersistentArena() { return pmem_arena_; }
+
  private:
   friend class ColumnFamilySet;
   ColumnFamilyData(uint32_t id, const std::string& name,
@@ -584,6 +588,9 @@ class ColumnFamilyData {
 
   // Directories corresponding to cf_paths.
   std::vector<std::unique_ptr<Directory>> data_dirs_;
+
+  // 每一个 ColumnFamilyData 拥有一个专属的用于存放 cuckoo filter 的 pmem 区
+  PersistentArena *pmem_arena_;
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

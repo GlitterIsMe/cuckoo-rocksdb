@@ -85,6 +85,14 @@ struct ImmutableDBOptions {
   bool persist_stats_to_disk;
   bool write_dbid_to_manifest;
   size_t log_readahead_size;
+
+  // 将 Tiered 模式所需要的参数通过 ImmutableDBOptions
+  // 传递给 ImmutableCFOptions
+  // 添加持久化内存文件的路径
+  std::string persistent_file_path_;
+
+  // 是否开启 Tiered 模式
+  bool is_tiered;
 };
 
 struct MutableDBOptions {

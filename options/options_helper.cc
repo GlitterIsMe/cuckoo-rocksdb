@@ -218,7 +218,8 @@ std::map<CompactionStyle, std::string>
         {kCompactionStyleLevel, "kCompactionStyleLevel"},
         {kCompactionStyleUniversal, "kCompactionStyleUniversal"},
         {kCompactionStyleFIFO, "kCompactionStyleFIFO"},
-        {kCompactionStyleNone, "kCompactionStyleNone"}};
+        {kCompactionStyleNone, "kCompactionStyleNone"},
+        {kCompactionStyleTier, "kCompactionStyleTier"}};
 
 std::map<CompactionPri, std::string> OptionsHelper::compaction_pri_to_string = {
     {kByCompensatedSize, "kByCompensatedSize"},

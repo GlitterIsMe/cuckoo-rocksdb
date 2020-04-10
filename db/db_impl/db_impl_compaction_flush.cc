@@ -2628,6 +2628,7 @@ Status DBImpl::BackgroundCompaction(bool* made_progress,
     *made_progress = true;
     TEST_SYNC_POINT_CALLBACK("DBImpl::BackgroundCompaction:AfterCompaction",
                              c->column_family_data());
+  // 在 Tiered 方式下，从第0层刷下去的不应该触发TrivialMove
   } else if (!trivial_move_disallowed && c->IsTrivialMove()) {
     TEST_SYNC_POINT("DBImpl::BackgroundCompaction:TrivialMove");
     TEST_SYNC_POINT_CALLBACK("DBImpl::BackgroundCompaction:BeforeCompaction",
@@ -2658,7 +2659,8 @@ Status DBImpl::BackgroundCompaction(bool* made_progress,
                            f->fd.GetPathId(), f->fd.GetFileSize(), f->smallest,
                            f->largest, f->fd.smallest_seqno,
                            f->fd.largest_seqno, f->marked_for_compaction,
-                           f->oldest_blob_file_number);
+                           f->oldest_blob_file_number,
+                           f->pmem_block_num);
 
         ROCKS_LOG_BUFFER(
             log_buffer,

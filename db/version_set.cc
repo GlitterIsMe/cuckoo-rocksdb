@@ -54,6 +54,7 @@
 #include "util/string_util.h"
 #include "util/user_comparator_wrapper.h"
 
+#define TIERED_DEBUG
 namespace rocksdb {
 
 namespace {
@@ -345,6 +346,231 @@ class FilePicker {
     // curr_level_ = num_levels_. So, no more levels to search.
     return false;
   }
+};
+
+// Tier 模式下的 FilePicker
+class TierFilePicker {
+public:
+  TierFilePicker(ColumnFamilyData* cfd, std::vector<FileMetaData*>* files, const Slice& user_key,
+             const Slice& ikey, autovector<LevelFilesBrief>* file_levels,
+             unsigned int num_levels, FileIndexer* file_indexer,
+             const Comparator* user_comparator,
+             const InternalKeyComparator* internal_comparator)
+    : cfd_(cfd), files_(files), user_key_(user_key),
+      ikey_(ikey), level_files_brief_(file_levels),
+      num_levels_(num_levels), user_comparator_(user_comparator),
+      internal_comparator_(internal_comparator) {
+      curr_level_ = 0;
+      curr_index_in_curr_level_ = 0;
+      valid_group_file_index_ = -1;     // 初始化为无效
+
+      hit_file_level_ = static_cast<unsigned int>(-1);
+      is_hit_file_last_in_level_ = false;
+
+      for (unsigned int i = 0; i < (*level_files_brief_)[0].num_files; ++i) {
+        auto* r = (*level_files_brief_)[0].files[i].fd.table_reader;
+        if (r) {
+          r->Prepare(ikey);
+        }
+      }
+  }
+
+  unsigned int GetHitFileLevel() { return hit_file_level_; }
+  int GetCurrentLevel() const { return curr_level_; }
+  bool IsHitFileLastInLevel() { return is_hit_file_last_in_level_; }
+  
+  FdWithKeyRange* GetNextFile() {
+    if (curr_level_ >= num_levels_) {
+      return nullptr;
+    }
+    REFIND:
+    if (valid_group_file_index_ != -1) {
+      while (valid_group_file_index_ < (int)(curr_level_in_range_group_.group_files_.size())) {
+        FdWithKeyRange* cur = curr_level_in_range_group_.group_files_[valid_group_file_index_];
+        Slice cur_smallest_key = ExtractUserKey(cur->smallest_key);
+        Slice cur_largest_key = ExtractUserKey(cur->largest_key);
+
+#ifndef TIERED_DEBUG
+        fprintf(stdout, "[VersionSet::FilePicker]-------------------------------------\n");
+        fprintf(stdout, "cur file: (level: %d) [ %s --> %s : %ld ] meta_data: [ %s --> %s : %ld ]\n",
+                curr_level_,
+                ExtractUserKey(cur->smallest_key).ToString().c_str(),
+                ExtractUserKey(cur->largest_key).ToString().c_str(),
+                cur->file_metadata->pmem_block_num,
+                cur->file_metadata->smallest.user_key().ToString().c_str(),
+                cur->file_metadata->largest.user_key().ToString().c_str(),
+                cur->file_metadata->pmem_block_num);
+        // fprintf(stdout, "file num: %ld\n", cur->fd.GetNumber());
+#endif
+
+        unsigned int idx = curr_level_in_range_group_.file_indexs_[valid_group_file_index_];
+        if (cur->file_metadata->pmem_block_num != 0) {
+          CuckooFilter* cuckoo = new CuckooFilter(cfd_->GetPersistentArena(),
+            cur->file_metadata->pmem_block_num);
+
+          if (!cuckoo->CuckooKeyExists(user_key_.data(), user_key_.size())) {
+
+#ifndef TIERED_DEBUG
+        fprintf(stdout, "[VersionSet::FilePicker]----------------Not Exists: Skip File---------------------\n\n");
+#endif
+
+            valid_group_file_index_++;
+            continue;
+          }
+          
+          if (user_comparator_->CompareWithoutTimestamp(
+              cur_smallest_key,
+              user_key_) <= 0 &&
+              user_comparator_->CompareWithoutTimestamp(
+              cur_largest_key,
+              user_key_) >= 0) {
+
+#ifndef TIERED_DEBUG
+        fprintf(stdout, "[VersionSet::FilePicker]----------------Maybe Exists: Load File Not Level0---------------------\n\n");
+#endif
+
+              // 文件中存在指定 user_key
+              hit_file_level_ = curr_level_;
+              valid_group_file_index_++;
+              is_hit_file_last_in_level_ = idx == curr_file_level_->num_files - 1;
+              delete cuckoo;
+              return cur;
+          }
+
+          delete cuckoo;
+        } else {
+          // 判断是不是第 0 层的
+          assert(curr_level_ == 0);
+          if (user_comparator_->CompareWithoutTimestamp(
+              cur_smallest_key,
+              user_key_) <= 0 &&
+              user_comparator_->CompareWithoutTimestamp(
+              cur_largest_key,
+              user_key_) >= 0) {
+            // 文件中可能存在指定的 user_key_
+#ifndef TIERED_DEBUG
+        fprintf(stdout, "[VersionSet::FilePicker]----------------Maybe Exists: Load File---------------------\n\n");
+#endif
+            hit_file_level_ = curr_level_;
+            valid_group_file_index_++;
+            is_hit_file_last_in_level_ = idx == curr_file_level_->num_files - 1;
+            return cur;
+          }
+        }
+        valid_group_file_index_++;
+      }
+      if (valid_group_file_index_ >= (int)(curr_level_in_range_group_.group_files_.size())) {
+        // 找下一层
+        do {
+              curr_level_++;
+              if (curr_level_ >= num_levels_) {
+                return nullptr;
+              }
+              PrepareCurLevelGroupInfo();
+        } while(curr_level_in_range_group_.group_files_.size() == 0);
+
+        valid_group_file_index_ = 0;
+        goto REFIND;
+      }
+    } else {
+      do {
+        PrepareCurLevelGroupInfo();
+      } while (curr_level_in_range_group_.group_files_.size() == 0 && (++curr_level_) < num_levels_);
+      if (curr_level_ >= num_levels_) {
+        return nullptr;
+      }
+      valid_group_file_index_ = 0;
+      goto REFIND;
+    }
+    return nullptr;
+  }
+
+private:
+  ColumnFamilyData* cfd_;
+  std::vector<FileMetaData*>* files_;
+  Slice user_key_;
+  Slice ikey_;
+  autovector<LevelFilesBrief>* level_files_brief_;
+  unsigned int num_levels_;
+  const Comparator* user_comparator_;
+  const InternalKeyComparator* internal_comparator_;
+
+  unsigned int hit_file_level_;
+  bool is_hit_file_last_in_level_;
+
+  unsigned int curr_level_;
+  unsigned int curr_index_in_curr_level_;
+
+  struct VerticalGroup 
+  {
+      std::vector<FdWithKeyRange*> group_files_;  // Group 中包含的文件元数据
+      std::vector<unsigned int> file_indexs_;
+      Slice smallest;                     // 整个 group 中的文件的最小 InternalKey
+      Slice largest;                      // 整个 group 中的文件的最大 InternalKey
+  };
+
+  VerticalGroup curr_level_in_range_group_;
+  LevelFilesBrief* curr_file_level_;
+  int valid_group_file_index_;
+
+  void PrepareCurLevelGroupInfo() {
+    curr_level_in_range_group_.group_files_.clear();
+    curr_level_in_range_group_.file_indexs_.clear();
+    // std::vector<FileMetaData*> level_files(*files_);
+    curr_file_level_ = &(*level_files_brief_)[curr_level_];
+// FdWithKeyRange* f = &curr_file_level_->files[curr_index_in_curr_level_];
+    // std::vector<FdWithKeyRange> level_files(curr_file_level_->files, 
+    //           curr_file_level_->files + curr_file_level_->num_files);
+
+    // std::sort(level_files.begin(), level_files.end(), 
+    //             [&](FdWithKeyRange ptr1, FdWithKeyRange ptr2)
+    //             {
+    //                 int cmp_res = internal_comparator_->Compare(ptr1.smallest_key, ptr2.smallest_key);
+    //                 if (!cmp_res)
+    //                     return internal_comparator_->Compare(ptr1.largest_key, ptr2.largest_key) > 0;
+    //                 else
+    //                     return cmp_res < 0;
+    //             });
+
+    if (curr_file_level_->num_files != 0) {
+      curr_level_in_range_group_.group_files_.push_back(&(curr_file_level_->files[0]));
+      curr_level_in_range_group_.file_indexs_.push_back(0);
+      curr_level_in_range_group_.smallest = curr_file_level_->files[0].smallest_key;
+      curr_level_in_range_group_.largest = curr_file_level_->files[0].largest_key;
+      for (size_t i = 1; i < curr_file_level_->num_files; i++) {
+        if (user_comparator_->CompareWithoutTimestamp(
+            ExtractUserKey(curr_level_in_range_group_.smallest),
+            ExtractUserKey(curr_file_level_->files[i].smallest_key)) <= 0 &&
+            user_comparator_->CompareWithoutTimestamp(
+            ExtractUserKey(curr_level_in_range_group_.largest),
+            ExtractUserKey(curr_file_level_->files[i].smallest_key)) >= 0) {
+          curr_level_in_range_group_.group_files_.push_back(&(curr_file_level_->files[i]));
+          curr_level_in_range_group_.file_indexs_.push_back(i);
+          if (internal_comparator_->Compare(
+              curr_level_in_range_group_.largest, curr_file_level_->files[i].largest_key) < 0) {
+            curr_level_in_range_group_.largest = curr_file_level_->files[i].largest_key;
+          }
+        } else {
+          if (user_comparator_->CompareWithoutTimestamp(
+              ExtractUserKey(curr_level_in_range_group_.smallest),
+              user_key_) <= 0 &&
+              user_comparator_->CompareWithoutTimestamp(
+              ExtractUserKey(curr_level_in_range_group_.largest),
+              user_key_) >= 0) {
+            return;
+          }
+          curr_level_in_range_group_.group_files_.clear();
+          curr_level_in_range_group_.file_indexs_.clear();
+          curr_level_in_range_group_.smallest = curr_file_level_->files[i].smallest_key;
+          curr_level_in_range_group_.largest = curr_file_level_->files[i].largest_key;
+        }
+      }
+      curr_level_in_range_group_.group_files_.clear();
+      curr_level_in_range_group_.file_indexs_.clear();
+      return;
+    }
+  }
+
 };
 
 class FilePickerMultiGet {
@@ -1736,11 +1962,12 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     pinned_iters_mgr.StartPinning();
   }
 
-  FilePicker fp(
-      storage_info_.files_, user_key, ikey, &storage_info_.level_files_brief_,
-      storage_info_.num_non_empty_levels_, &storage_info_.file_indexer_,
-      user_comparator(), internal_comparator());
-  FdWithKeyRange* f = fp.GetNextFile();
+  FdWithKeyRange* f;
+  TierFilePicker fp(cfd_,
+    storage_info_.files_, user_key, ikey, &storage_info_.level_files_brief_,
+    storage_info_.num_non_empty_levels_, &storage_info_.file_indexer_,
+    user_comparator(), internal_comparator());
+  f = fp.GetNextFile();
 
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
@@ -2174,7 +2401,8 @@ void VersionStorageInfo::ComputeCompensatedSizes() {
 }
 
 int VersionStorageInfo::MaxInputLevel() const {
-  if (compaction_style_ == kCompactionStyleLevel) {
+  if (compaction_style_ == kCompactionStyleLevel || 
+      compaction_style_ == kCompactionStyleTier) {
     return num_levels() - 2;
   }
   return 0;
@@ -2354,7 +2582,8 @@ void VersionStorageInfo::ComputeCompactionScore(
       } else {
         score = static_cast<double>(num_sorted_runs) /
                 mutable_cf_options.level0_file_num_compaction_trigger;
-        if (compaction_style_ == kCompactionStyleLevel && num_levels() > 1) {
+        if ((compaction_style_ == kCompactionStyleLevel || 
+             compaction_style_ == kCompactionStyleTier) && num_levels() > 1) {
           // Level-based involves L0->L0 compactions that can lead to oversized
           // L0 files. Take into account size as well to avoid later giant
           // compactions to the base level.
@@ -2525,6 +2754,9 @@ bool CompareCompensatedSizeDescending(const Fsize& first, const Fsize& second) {
 
 void VersionStorageInfo::AddFile(int level, FileMetaData* f, Logger* info_log) {
   auto* level_files = &files_[level];
+  f->refs++;
+  level_files->push_back(f);
+  return;
   // Must not overlap
 #ifndef NDEBUG
   if (level > 0 && !level_files->empty() &&
@@ -4927,7 +5159,8 @@ Status VersionSet::WriteCurrentStateToManifest(log::Writer* log) {
           edit.AddFile(level, f->fd.GetNumber(), f->fd.GetPathId(),
                        f->fd.GetFileSize(), f->smallest, f->largest,
                        f->fd.smallest_seqno, f->fd.largest_seqno,
-                       f->marked_for_compaction, f->oldest_blob_file_number);
+                       f->marked_for_compaction, f->oldest_blob_file_number,
+                       f->pmem_block_num);
         }
       }
       edit.SetLogNumber(cfd->GetLogNumber());

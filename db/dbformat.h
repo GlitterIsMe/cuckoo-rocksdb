@@ -205,6 +205,7 @@ class InternalKeyComparator
   }
 
   int Compare(const InternalKey& a, const InternalKey& b) const;
+  int CompareWithUserKey(const InternalKey& a, const InternalKey& b) const;
   int Compare(const ParsedInternalKey& a, const ParsedInternalKey& b) const;
   virtual const Comparator* GetRootComparator() const override {
     return user_comparator_.GetRootComparator();
@@ -277,6 +278,11 @@ class InternalKey {
 inline int InternalKeyComparator::Compare(const InternalKey& a,
                                           const InternalKey& b) const {
   return Compare(a.Encode(), b.Encode());
+}
+
+inline int InternalKeyComparator::CompareWithUserKey(const InternalKey& a,
+                                                     const InternalKey& b) const {
+  return user_comparator_.Compare(ExtractUserKey(a.Encode()), ExtractUserKey(b.Encode()));
 }
 
 inline bool ParseInternalKey(const Slice& internal_key,

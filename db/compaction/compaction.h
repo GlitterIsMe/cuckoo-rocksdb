@@ -78,7 +78,11 @@ class Compaction {
              std::vector<FileMetaData*> grandparents,
              bool manual_compaction = false, double score = -1,
              bool deletion_compaction = false,
-             CompactionReason compaction_reason = CompactionReason::kUnknown);
+             CompactionReason compaction_reason = CompactionReason::kUnknown,
+             // 提供默认参数
+             std::vector<CompactionInputFiles> dump_output_level_inputs_for_tier_compaction_ = 
+             std::vector<CompactionInputFiles>(),
+             uint64_t input_level_group_filter_block_num = 0);
 
   // No copying allowed
   Compaction(const Compaction&) = delete;
@@ -287,6 +291,14 @@ class Compaction {
     return grandparents_;
   }
 
+  const std::vector<CompactionInputFiles>& GetDumpOutputLevel() const {
+    return dump_output_level_inputs_for_tier_compaction_;
+  }
+
+  uint64_t GetInputGroupFilterBlockNum() {
+    return input_level_group_filter_block_num_;
+  }
+
   uint64_t max_compaction_bytes() const { return max_compaction_bytes_; }
 
   uint32_t max_subcompactions() const { return max_subcompactions_; }
@@ -376,6 +388,15 @@ class Compaction {
 
   // Reason for compaction
   CompactionReason compaction_reason_;
+
+  // 在 Tier Compaction 中 output_level 的重叠文件并不参与 merge
+  // 但是由于需要对 start_level_ 的文件进行 compaction 划分
+  // 这里需要保存一下 output_level 的重叠文件
+  // 以便在 BackgroundCompaction 划分 subcompaction 的时候提供这些必要的信息
+  const std::vector<CompactionInputFiles> dump_output_level_inputs_for_tier_compaction_;
+
+  // 保存 input_level 上进行 compaction 的组的 group filter 的 block 号
+  uint64_t input_level_group_filter_block_num_;
 };
 
 // Return sum of sizes of all files in `files`.

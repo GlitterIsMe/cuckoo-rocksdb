@@ -1104,6 +1104,12 @@ struct DBOptions {
   //
   // Default: 0
   size_t log_readahead_size = 0;
+
+  // 添加持久化内存文件的路径
+  std::string persistent_file_path_ = "./pmem";
+
+  // 是否开启 Tiered 模式
+  bool is_tiered = false;
 };
 
 // Options to control the behavior of a database (passed to DB::Open)

@@ -117,7 +117,10 @@ class CompactionJob {
   void AllocateCompactionOutputFileNumbers();
   // Call compaction filter. Then iterate through input and compact the
   // kv-pairs
-  void ProcessKeyValueCompaction(SubcompactionState* sub_compact);
+  // 针对 Tier 读流程进行修改
+  void ProcessKeyValueCompaction(SubcompactionState* sub_compact,
+                                 uint64_t group_filter_block_num = 0,
+                                 uint64_t input_group_filter_block_num = 0);
 
   Status FinishCompactionOutputFile(
       const Status& input_status, SubcompactionState* sub_compact,
@@ -126,7 +129,8 @@ class CompactionJob {
       const Slice* next_table_min_key = nullptr);
   Status InstallCompactionResults(const MutableCFOptions& mutable_cf_options);
   void RecordCompactionIOStats();
-  Status OpenCompactionOutputFile(SubcompactionState* sub_compact);
+  Status OpenCompactionOutputFile(SubcompactionState* sub_compact,
+                                  uint64_t group_filter_block_num = 0);
   void CleanupCompaction();
   void UpdateCompactionJobStats(
     const InternalStats::CompactionStats& stats) const;
@@ -190,6 +194,10 @@ class CompactionJob {
   std::vector<Slice> boundaries_;
   // Stores the approx size of keys covered in the range of each subcompaction
   std::vector<uint64_t> sizes_;
+
+  // 存放每一个 subcompaction 在 output 层对应的 group_filter 在 pmem 中的 block_num
+  std::vector<uint64_t> output_level_group_filter_block_nums_;
+
   Env::WriteLifeTimeHint write_hint_;
   Env::Priority thread_pri_;
 };

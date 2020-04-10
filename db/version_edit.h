@@ -18,6 +18,8 @@
 #include "rocksdb/cache.h"
 #include "util/autovector.h"
 
+#include "utilities/persistent_cuckoo_filter/cuckoo_filter.h"
+
 namespace rocksdb {
 
 class VersionSet;
@@ -122,18 +124,28 @@ struct FileMetaData {
   // refers to. 0 is an invalid value; BlobDB numbers the files starting from 1.
   uint64_t oldest_blob_file_number = kInvalidBlobFileNumber;
 
+  // 添加文件与 persistent 文件中的 group cuckoo filter 相关联的信息
+  // 本文件所属的group filter在 pmem 中的 block 号
+  // 默认取0保证是无效的 block 号
+  uint64_t pmem_block_num = 0;
+  // cuckoo filter 对象创建在易失内存中
+  // 但是实际的 cuckoo hash 表完全保存在 pmem 
+  // CuckooFilter *cuckoo_filter = nullptr;
+
   FileMetaData() = default;
 
   FileMetaData(uint64_t file, uint32_t file_path_id, uint64_t file_size,
                const InternalKey& smallest_key, const InternalKey& largest_key,
                const SequenceNumber& smallest_seq,
                const SequenceNumber& largest_seq, bool marked_for_compact,
-               uint64_t oldest_blob_file)
+               uint64_t oldest_blob_file,
+               uint64_t group_filter_block_num = 0)
       : fd(file, file_path_id, file_size, smallest_seq, largest_seq),
         smallest(smallest_key),
         largest(largest_key),
         marked_for_compaction(marked_for_compact),
-        oldest_blob_file_number(oldest_blob_file) {}
+        oldest_blob_file_number(oldest_blob_file),
+        pmem_block_num(group_filter_block_num) {}
 
   // REQUIRED: Keys must be given to the function in sorted order (it expects
   // the last key to be the largest).
@@ -255,12 +267,13 @@ class VersionEdit {
                uint64_t file_size, const InternalKey& smallest,
                const InternalKey& largest, const SequenceNumber& smallest_seqno,
                const SequenceNumber& largest_seqno, bool marked_for_compaction,
-               uint64_t oldest_blob_file_number) {
+               uint64_t oldest_blob_file_number,
+               uint64_t group_filter_block_num = 0) {
     assert(smallest_seqno <= largest_seqno);
     new_files_.emplace_back(
         level, FileMetaData(file, file_path_id, file_size, smallest, largest,
                             smallest_seqno, largest_seqno,
-                            marked_for_compaction, oldest_blob_file_number));
+                            marked_for_compaction, oldest_blob_file_number, group_filter_block_num));
   }
 
   void AddFile(int level, const FileMetaData& f) {

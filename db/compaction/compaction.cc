@@ -214,7 +214,9 @@ Compaction::Compaction(VersionStorageInfo* vstorage,
                        std::vector<FileMetaData*> _grandparents,
                        bool _manual_compaction, double _score,
                        bool _deletion_compaction,
-                       CompactionReason _compaction_reason)
+                       CompactionReason _compaction_reason,
+                       std::vector<CompactionInputFiles> dump_output_level_inputs_for_tier_compaction,
+                       uint64_t input_level_group_filter_block_num)
     : input_vstorage_(vstorage),
       start_level_(_inputs[0].level),
       output_level_(_output_level),
@@ -237,7 +239,9 @@ Compaction::Compaction(VersionStorageInfo* vstorage,
       is_full_compaction_(IsFullCompaction(vstorage, inputs_)),
       is_manual_compaction_(_manual_compaction),
       is_trivial_move_(false),
-      compaction_reason_(_compaction_reason) {
+      compaction_reason_(_compaction_reason),
+      dump_output_level_inputs_for_tier_compaction_(std::move(dump_output_level_inputs_for_tier_compaction)),
+      input_level_group_filter_block_num_(input_level_group_filter_block_num) {
   MarkFilesBeingCompacted(true);
   if (is_manual_compaction_) {
     compaction_reason_ = CompactionReason::kManualCompaction;
@@ -295,6 +299,9 @@ bool Compaction::InputCompressionMatchesOutput() const {
 }
 
 bool Compaction::IsTrivialMove() const {
+  if (column_family_data()->ioptions()->compaction_style == kCompactionStyleTier) {
+    return false;
+  }
   // Avoid a move if there is lots of overlapping grandparent data.
   // Otherwise, the move could create a parent file that will require
   // a very expensive merge later on.
@@ -363,7 +370,8 @@ bool Compaction::KeyNotExistsBeyondOutputLevel(
   if (bottommost_level_) {
     return true;
   } else if (output_level_ != 0 &&
-             cfd_->ioptions()->compaction_style == kCompactionStyleLevel) {
+             (cfd_->ioptions()->compaction_style == kCompactionStyleLevel ||
+              cfd_->ioptions()->compaction_style == kCompactionStyleTier)) {
     // Maybe use binary search to find right entry instead of linear search?
     const Comparator* user_cmp = cfd_->user_comparator();
     for (int lvl = output_level_ + 1; lvl < number_levels_; lvl++) {
@@ -532,6 +540,10 @@ bool Compaction::IsOutputLevelEmpty() const {
 }
 
 bool Compaction::ShouldFormSubcompactions() const {
+  if (cfd_->ioptions()->compaction_style == kCompactionStyleTier && output_level_ > 0 &&
+             GetDumpOutputLevel()[0].files.size() > 0) {
+    return true;
+  }
   if (max_subcompactions_ <= 1 || cfd_ == nullptr) {
     return false;
   }
@@ -540,6 +552,9 @@ bool Compaction::ShouldFormSubcompactions() const {
            !IsOutputLevelEmpty();
   } else if (cfd_->ioptions()->compaction_style == kCompactionStyleUniversal) {
     return number_levels_ > 1 && output_level_ > 0;
+  } else if (cfd_->ioptions()->compaction_style == kCompactionStyleTier &&
+             GetDumpOutputLevel().size() > 0) {
+    return true;
   } else {
     return false;
   }
