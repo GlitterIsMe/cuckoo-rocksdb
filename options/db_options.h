@@ -10,7 +10,7 @@
 
 #include "rocksdb/options.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 struct ImmutableDBOptions {
   ImmutableDBOptions();
@@ -23,6 +23,7 @@ struct ImmutableDBOptions {
   bool error_if_exists;
   bool paranoid_checks;
   Env* env;
+  std::shared_ptr<FileSystem> fs;
   std::shared_ptr<RateLimiter> rate_limiter;
   std::shared_ptr<SstFileManager> sst_file_manager;
   std::shared_ptr<Logger> info_log;
@@ -67,6 +68,7 @@ struct ImmutableDBOptions {
   uint64_t write_thread_max_yield_usec;
   uint64_t write_thread_slow_yield_usec;
   bool skip_stats_update_on_db_open;
+  bool skip_checking_sst_file_sizes_on_db_open;
   WALRecoveryMode wal_recovery_mode;
   bool allow_2pc;
   std::shared_ptr<Cache> row_cache;
@@ -90,9 +92,10 @@ struct ImmutableDBOptions {
   // 传递给 ImmutableCFOptions
   // 添加持久化内存文件的路径
   std::string persistent_file_path_;
-
   // 是否开启 Tiered 模式
   bool is_tiered;
+  std::shared_ptr<FileChecksumGenFactory> file_checksum_gen_factory;
+  bool best_efforts_recovery;
 };
 
 struct MutableDBOptions {
@@ -120,4 +123,4 @@ struct MutableDBOptions {
   size_t compaction_readahead_size;
 };
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

@@ -15,7 +15,7 @@
 #include "table/block_based/block_based_table_reader.h"
 #include "util/coding.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 PartitionedFilterBlockBuilder::PartitionedFilterBlockBuilder(
     const SliceTransform* _prefix_extractor, bool whole_key_filtering,
@@ -32,9 +32,8 @@ PartitionedFilterBlockBuilder::PartitionedFilterBlockBuilder(
                                                  true /*use_delta_encoding*/,
                                                  use_value_delta_encoding),
       p_index_builder_(p_index_builder),
-      filters_in_partition_(0),
-      num_added_(0) {
-  filters_per_partition_ =
+      keys_added_to_partition_(0) {
+  keys_per_partition_ =
       filter_bits_builder_->CalculateNumEntry(partition_size);
 }
 
@@ -43,7 +42,7 @@ PartitionedFilterBlockBuilder::~PartitionedFilterBlockBuilder() {}
 void PartitionedFilterBlockBuilder::MaybeCutAFilterBlock(
     const Slice* next_key) {
   // Use == to send the request only once
-  if (filters_in_partition_ == filters_per_partition_) {
+  if (keys_added_to_partition_ == keys_per_partition_) {
     // Currently only index builder is in charge of cutting a partition. We keep
     // requesting until it is granted.
     p_index_builder_->RequestPartitionCut();
@@ -65,7 +64,7 @@ void PartitionedFilterBlockBuilder::MaybeCutAFilterBlock(
   Slice filter = filter_bits_builder_->Finish(&filter_gc.back());
   std::string& index_key = p_index_builder_->GetPartitionKey();
   filters.push_back({index_key, filter});
-  filters_in_partition_ = 0;
+  keys_added_to_partition_ = 0;
   Reset();
 }
 
@@ -75,9 +74,8 @@ void PartitionedFilterBlockBuilder::Add(const Slice& key) {
 }
 
 void PartitionedFilterBlockBuilder::AddKey(const Slice& key) {
-  filter_bits_builder_->AddKey(key);
-  filters_in_partition_++;
-  num_added_++;
+  FullFilterBlockBuilder::AddKey(key);
+  keys_added_to_partition_++;
 }
 
 Slice PartitionedFilterBlockBuilder::Finish(
@@ -196,8 +194,9 @@ BlockHandle PartitionedFilterBlockReader::GetFilterPartitionHandle(
   const InternalKeyComparator* const comparator = internal_comparator();
   Statistics* kNullStats = nullptr;
   filter_block.GetValue()->NewIndexIterator(
-      comparator, comparator->user_comparator(), &iter, kNullStats,
-      true /* total_order_seek */, false /* have_first_key */,
+      comparator, comparator->user_comparator(),
+      table()->get_rep()->get_global_seqno(BlockType::kFilter), &iter,
+      kNullStats, true /* total_order_seek */, false /* have_first_key */,
       index_key_includes_seq(), index_value_is_full());
   iter.Seek(entry);
   if (UNLIKELY(!iter.Valid())) {
@@ -217,7 +216,7 @@ Status PartitionedFilterBlockReader::GetFilterPartitionBlock(
     FilePrefetchBuffer* prefetch_buffer, const BlockHandle& fltr_blk_handle,
     bool no_io, GetContext* get_context,
     BlockCacheLookupContext* lookup_context,
-    CachableEntry<BlockContents>* filter_block) const {
+    CachableEntry<ParsedFullFilterBlock>* filter_block) const {
   assert(table());
   assert(filter_block);
   assert(filter_block->IsEmpty());
@@ -255,6 +254,7 @@ bool PartitionedFilterBlockReader::MayMatch(
   Status s =
       GetOrReadFilterBlock(no_io, get_context, lookup_context, &filter_block);
   if (UNLIKELY(!s.ok())) {
+    TEST_SYNC_POINT("FilterReadError");
     return true;
   }
 
@@ -267,11 +267,12 @@ bool PartitionedFilterBlockReader::MayMatch(
     return false;
   }
 
-  CachableEntry<BlockContents> filter_partition_block;
+  CachableEntry<ParsedFullFilterBlock> filter_partition_block;
   s = GetFilterPartitionBlock(nullptr /* prefetch_buffer */, filter_handle,
                               no_io, get_context, lookup_context,
                               &filter_partition_block);
   if (UNLIKELY(!s.ok())) {
+    TEST_SYNC_POINT("FilterReadError");
     return true;
   }
 
@@ -311,6 +312,7 @@ void PartitionedFilterBlockReader::CacheDependencies(bool pin) {
                    "Error retrieving top-level filter block while trying to "
                    "cache filter partitions: %s",
                    s.ToString().c_str());
+    TEST_SYNC_POINT("FilterReadError");
     return;
   }
 
@@ -321,7 +323,8 @@ void PartitionedFilterBlockReader::CacheDependencies(bool pin) {
   const InternalKeyComparator* const comparator = internal_comparator();
   Statistics* kNullStats = nullptr;
   filter_block.GetValue()->NewIndexIterator(
-      comparator, comparator->user_comparator(), &biter, kNullStats,
+      comparator, comparator->user_comparator(),
+      rep->get_global_seqno(BlockType::kFilter), &biter, kNullStats,
       true /* total_order_seek */, false /* have_first_key */,
       index_key_includes_seq(), index_value_is_full());
   // Index partitions are assumed to be consecuitive. Prefetch them all.
@@ -340,13 +343,18 @@ void PartitionedFilterBlockReader::CacheDependencies(bool pin) {
   prefetch_buffer.reset(new FilePrefetchBuffer());
   s = prefetch_buffer->Prefetch(rep->file.get(), prefetch_off,
                                 static_cast<size_t>(prefetch_len));
+#ifndef NDEBUG
+  if (!s.ok()) {
+    TEST_SYNC_POINT("FilterReadError");
+  }
+#endif
 
   // After prefetch, read the partitions one by one
   ReadOptions read_options;
   for (biter.SeekToFirst(); biter.Valid(); biter.Next()) {
     handle = biter.value().handle;
 
-    CachableEntry<BlockContents> block;
+    CachableEntry<ParsedFullFilterBlock> block;
     // TODO: Support counter batch update for partitioned index and
     // filter blocks
     s = table()->MaybeReadBlockAndLoadToCache(
@@ -362,6 +370,11 @@ void PartitionedFilterBlockReader::CacheDependencies(bool pin) {
         }
       }
     }
+#ifndef NDEBUG
+    if (!s.ok()) {
+      TEST_SYNC_POINT("FilterReadError");
+    }
+#endif
   }
 }
 
@@ -387,4 +400,4 @@ bool PartitionedFilterBlockReader::index_value_is_full() const {
   return table()->get_rep()->index_value_is_full;
 }
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

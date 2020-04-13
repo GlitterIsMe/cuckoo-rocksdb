@@ -25,7 +25,7 @@
 #include "table/plain/plain_table_index.h"
 #include "table/table_reader.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 class Block;
 struct BlockContents;
@@ -165,7 +165,9 @@ class PlainTableReader: public TableReader {
   const ImmutableCFOptions& ioptions_;
   std::unique_ptr<Cleanable> dummy_cleanable_;
   uint64_t file_size_;
+ protected: // for testing
   std::shared_ptr<const TableProperties> table_properties_;
+ private:
 
   bool IsFixedLength() const {
     return user_key_len_ != kPlainTableVariableLength;
@@ -240,5 +242,5 @@ class PlainTableReader: public TableReader {
   explicit PlainTableReader(const TableReader&) = delete;
   void operator=(const TableReader&) = delete;
 };
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE
 #endif  // ROCKSDB_LITE

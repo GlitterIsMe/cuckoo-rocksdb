@@ -20,7 +20,7 @@
 #include "util/coding.h"
 #include "util/string_util.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 // Conversions between numeric keys/values and the types expected by Cache.
 static std::string EncodeKey(int k) {
@@ -365,7 +365,7 @@ TEST_P(CacheTest, EvictionPolicy) {
   Insert(200, 201);
 
   // Frequently used entry must be kept around
-  for (int i = 0; i < kCacheSize + 200; i++) {
+  for (int i = 0; i < kCacheSize * 2; i++) {
     Insert(1000+i, 2000+i);
     ASSERT_EQ(101, Lookup(100));
   }
@@ -418,7 +418,7 @@ TEST_P(CacheTest, EvictionPolicyRef) {
   Insert(303, 104);
 
   // Insert entries much more than Cache capacity
-  for (int i = 0; i < kCacheSize + 200; i++) {
+  for (int i = 0; i < kCacheSize * 2; i++) {
     Insert(1000 + i, 2000 + i);
   }
 
@@ -765,7 +765,7 @@ INSTANTIATE_TEST_CASE_P(CacheTestInstance, CacheTest, testing::Values(kLRU));
 #endif  // SUPPORT_CLOCK_CACHE
 INSTANTIATE_TEST_CASE_P(CacheTestInstance, LRUCacheTest, testing::Values(kLRU));
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

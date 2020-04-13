@@ -17,7 +17,7 @@
 #include "util/hash.h"
 #include "util/string_util.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 // For testing: emit an array with one hash value per key
 class TestHashFilter : public FilterPolicy {
@@ -240,7 +240,7 @@ class BlockBasedFilterBlockTest : public mock::MockBlockBasedTableTester,
                                   public testing::Test {
  public:
   BlockBasedFilterBlockTest()
-      : mock::MockBlockBasedTableTester(NewBloomFilterPolicy(10)) {}
+      : mock::MockBlockBasedTableTester(NewBloomFilterPolicy(10, true)) {}
 };
 
 TEST_F(BlockBasedFilterBlockTest, BlockBasedEmptyBuilder) {
@@ -426,7 +426,7 @@ TEST_F(BlockBasedFilterBlockTest, BlockBasedMultiChunk) {
   delete reader;
 }
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

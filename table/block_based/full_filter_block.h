@@ -16,10 +16,10 @@
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
 #include "table/block_based/filter_block_reader_common.h"
-#include "table/format.h"
+#include "table/block_based/parsed_full_filter_block.h"
 #include "util/hash.h"
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 class FilterPolicy;
 class FilterBitsBuilder;
@@ -80,10 +80,11 @@ class FullFilterBlockBuilder : public FilterBlockBuilder {
 
 // A FilterBlockReader is used to parse filter from SST table.
 // KeyMayMatch and PrefixMayMatch would trigger filter checking
-class FullFilterBlockReader : public FilterBlockReaderCommon<BlockContents> {
+class FullFilterBlockReader
+    : public FilterBlockReaderCommon<ParsedFullFilterBlock> {
  public:
   FullFilterBlockReader(const BlockBasedTable* t,
-                        CachableEntry<BlockContents>&& filter_block);
+                        CachableEntry<ParsedFullFilterBlock>&& filter_block);
 
   static std::unique_ptr<FilterBlockReader> Create(
       const BlockBasedTable* table, FilePrefetchBuffer* prefetch_buffer,
@@ -118,7 +119,7 @@ class FullFilterBlockReader : public FilterBlockReaderCommon<BlockContents> {
                      const SliceTransform* prefix_extractor,
                      const Comparator* comparator,
                      const Slice* const const_ikey_ptr, bool* filter_checked,
-                     bool need_upper_bound_check,
+                     bool need_upper_bound_check, bool no_io,
                      BlockCacheLookupContext* lookup_context) override;
 
  private:
@@ -135,4 +136,4 @@ class FullFilterBlockReader : public FilterBlockReaderCommon<BlockContents> {
   size_t prefix_extractor_full_length_;
 };
 
-}  // namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE

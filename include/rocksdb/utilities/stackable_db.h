@@ -14,7 +14,7 @@
 #undef DeleteFile
 #endif
 
-namespace rocksdb {
+namespace ROCKSDB_NAMESPACE {
 
 // This class contains APIs to stack rocksdb wrappers.Eg. Stack TTL over base d
 class StackableDB : public DB {
@@ -299,6 +299,10 @@ class StackableDB : public DB {
 
   virtual Env* GetEnv() const override { return db_->GetEnv(); }
 
+  virtual FileSystem* GetFileSystem() const override {
+    return db_->GetFileSystem();
+  }
+
   using DB::GetOptions;
   virtual Options GetOptions(ColumnFamilyHandle* column_family) const override {
     return db_->GetOptions(column_family);
@@ -383,6 +387,11 @@ class StackableDB : public DB {
     return db_->GetCurrentWalFile(current_log_file);
   }
 
+  virtual Status GetCreationTimeOfOldestFile(
+      uint64_t* creation_time) override {
+    return db_->GetCreationTimeOfOldestFile(creation_time);
+  }
+
   virtual Status DeleteFile(std::string name) override {
     return db_->DeleteFile(name);
   }
@@ -453,4 +462,4 @@ class StackableDB : public DB {
   std::shared_ptr<DB> shared_db_ptr_;
 };
 
-}  //  namespace rocksdb
+}  // namespace ROCKSDB_NAMESPACE
