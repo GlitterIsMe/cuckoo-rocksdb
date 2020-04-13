@@ -440,7 +440,7 @@ namespace {
             GetPathId(ioptions_, mutable_cf_options_, output_level_),
             GetCompressionType(ioptions_, vstorage_, mutable_cf_options_,
                                 output_level_, vstorage_->base_level()),
-            GetCompressionOptions(ioptions_, vstorage_, output_level_),
+            GetCompressionOptions(mutable_cf_options_, vstorage_, output_level_),
             // GenSubcompactionBoundaries 中对 Tier 的情况进行了特殊处理
             // Tier 的 subcompaction 数和 max_subcompactions 无关
             // 所以这里传0也可以
