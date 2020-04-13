@@ -827,17 +827,6 @@ if(WIN32)
   set(SYSTEM_LIBS ${SYSTEM_LIBS} shlwapi.lib rpcrt4.lib)
 else()
   set(SYSTEM_LIBS ${CMAKE_THREAD_LIBS_INIT})
-  set(LIBS ${ROCKSDB_SHARED_LIB} ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
-
-  add_library(${ROCKSDB_SHARED_LIB} SHARED ${SOURCES})
-  target_link_libraries(${ROCKSDB_SHARED_LIB}
-    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS} pmem)
-  set_target_properties(${ROCKSDB_SHARED_LIB} PROPERTIES
-                        LINKER_LANGUAGE CXX
-                        VERSION ${rocksdb_VERSION}
-                        SOVERSION ${rocksdb_VERSION_MAJOR}
-                        CXX_STANDARD 11
-                        OUTPUT_NAME "rocksdb")
 endif()
 
 add_library(${ROCKSDB_STATIC_LIB} STATIC ${SOURCES})
@@ -847,7 +836,7 @@ target_link_libraries(${ROCKSDB_STATIC_LIB}
 if(ROCKSDB_BUILD_SHARED)
   add_library(${ROCKSDB_SHARED_LIB} SHARED ${SOURCES})
   target_link_libraries(${ROCKSDB_SHARED_LIB}
-    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
+    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS} pmem)
 
   if(WIN32)
     set_target_properties(${ROCKSDB_SHARED_LIB} PROPERTIES
