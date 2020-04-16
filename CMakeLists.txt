@@ -176,6 +176,10 @@ if(WIN32 AND MSVC)
   endif()
 endif()
 
+if(CMAKE_BUILD_TYPE MATCHES "Debug" )
+    add_definitions(-DPMEM_CUCKOO_DEBUG)
+endif()
+
 set(BUILD_VERSION_CC ${CMAKE_BINARY_DIR}/build_version.cc)
 configure_file(util/build_version.cc.in ${BUILD_VERSION_CC} @ONLY)
 add_library(build_version OBJECT ${BUILD_VERSION_CC})

@@ -24,7 +24,7 @@ namespace rocksdb {
 #ifdef PMEM_CUCKOO_DEBUG
         printf("[CuckooFilter]sizeof(AllocatedBlockListNode)=%ld, sizeof(CuckooSlot)=%ld",
                 sizeof(AllocatedBlockListNode), sizeof(CuckooSlot));
-        printf("[CuckooFilter]bucket_size_: %ld, slot_num: %ld\n", bucket_size_, slot_num);
+        printf("[ CuckooFilter]bucket_size_: %ld, slot_num: %ld\n", bucket_size_, slot_num);
 #endif
         pmem_buckets_ = new CuckooBucket *[bucket_size_];
         char *tmp = filter_addr_;

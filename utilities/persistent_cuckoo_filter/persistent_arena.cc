@@ -11,7 +11,9 @@ namespace rocksdb {
 
         bool file_is_exists = access(path.c_str(), F_OK) ? false : true;
 #ifdef PMEM_CUCKOO_DEBUG
-        printf("[PersistentArena] pmem_size: %ld, file_is_exists: %d\n",pmem_size, file_is_exists);
+        printf("[%s] pmem_size: %ld, file_is_exists: %d\n",__FUNCTION__, pmem_size, file_is_exists);
+        printf("[%s] delete existed file %s [%d]\n", __FUNCTION__, path.c_str(), remove(path.c_str()));
+        file_is_exists = false;
 #endif
         pmemaddr = (char *) pmem_map_file(path.c_str(), pmem_size,
                                           PMEM_FILE_CREATE, 0666, &mapped_size, &is_pmem);
@@ -50,7 +52,7 @@ namespace rocksdb {
         Sync();
         pmem_unmap(pmem_raw_, mapped_len_);
 #ifdef PMEM_CUCKOO_DEBUG
-        printf("[~PersistentArena]\n");
+        printf("[%s]\n", __FUNCTION__);
 #endif
     }
 
@@ -64,7 +66,7 @@ namespace rocksdb {
 
         int64_t free_block_num = *first_free_block_;
 #ifdef PMEM_CUCKOO_DEBUG
-        printf("[PersistentArena::AllocateBlock] free_block_num=%ld\n", free_block_num);
+        printf("[%s] free_block_num=%ld\n", __FUNCTION__, free_block_num);
 #endif
         AllocatedBlockListNode *node =
                 (AllocatedBlockListNode *) (pmem_raw_ + free_block_num * BLOCK_SIZE);
